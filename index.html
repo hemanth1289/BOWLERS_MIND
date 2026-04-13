@@ -660,7 +660,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
       <div class="li"><div class="ldot" style="background:#ef4444"></div>Ball</div>
       <div class="li"><div class="ldot" style="background:#00d2c8;border:1px solid #e8b84b"></div>Locked</div>
     </div>
-    <div class="hint">Click the field after setting positions to animate a delivery</div>
+    <div class="hint">Click the field to animate a delivery &nbsp;·&nbsp; <span style="color:#00d2c8">Double-click a fielder</span> to rename their position</div>
   </div>
 </div>
 
@@ -1407,8 +1407,23 @@ function renderField(data){
     t.setAttribute('font-family','DM Sans,sans-serif');
     t.setAttribute('font-weight','500');
     t.textContent=shortLbl(f.name);
+    t.style.cursor = 'text';
+    t.title = 'Double-click to rename';
+
+    // Double-click on label to rename fielder
+    t.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openFielderRename(f, t, c);
+    });
+    // Also allow double-click on the circle dot
+    c.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openFielderRename(f, t, c);
+    });
 
     g.appendChild(c); g.appendChild(t);
+    // Store text reference on circle for drag access
+    c._labelEl = t;
     layer.appendChild(g);
 
     c.setAttribute('opacity','0'); t.setAttribute('opacity','0');
@@ -1422,7 +1437,7 @@ function renderField(data){
 let dragging = null;
 
 function startDrag(e, element, name){
-  dragging = { el: element, name };
+  dragging = { el: element, lbl: element._labelEl, name };
   element.style.cursor = "grabbing";
 }
 
@@ -1434,6 +1449,12 @@ document.addEventListener("mousemove", (e) => {
   const y = ((e.clientY - rect.top) / rect.height) * 500;
   dragging.el.setAttribute("cx", x);
   dragging.el.setAttribute("cy", y);
+  // Move the label with the fielder dot
+  if(dragging.lbl) {
+    const above = y > 260;
+    dragging.lbl.setAttribute("x", x);
+    dragging.lbl.setAttribute("y", above ? y - 13 : y + 20);
+  }
   const gx = Math.round((x / 5));
   const gy = Math.round((y / 5));
   if(POS[dragging.name]){
@@ -1448,6 +1469,160 @@ document.addEventListener("mouseup", () => {
   dragging = null;
 });
 
+// Custom display names set by user (key = original position name)
+const CUSTOM_NAMES = {};
+
+function openFielderRename(f, textEl, circleEl) {
+  const svg = document.getElementById('fsv');
+  const svgRect = svg.getBoundingClientRect();
+  const scaleX = svgRect.width / 500;
+  const scaleY = svgRect.height / 500;
+
+  const cx = parseFloat(circleEl.getAttribute('cx')) * scaleX + svgRect.left;
+  const cy = parseFloat(circleEl.getAttribute('cy')) * scaleY + svgRect.top + window.scrollY;
+
+  // Remove any existing rename input
+  const existing = document.getElementById('fielder-rename-popup');
+  if(existing) existing.remove();
+
+  const popup = document.createElement('div');
+  popup.id = 'fielder-rename-popup';
+  popup.style.cssText = `
+    position:fixed;
+    left:${cx - 70}px;
+    top:${cy - 52}px;
+    z-index:9999;
+    background:#0d1520;
+    border:1px solid #00d2c8;
+    border-radius:8px;
+    padding:8px 10px;
+    box-shadow:0 4px 20px rgba(0,210,200,0.25);
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    min-width:160px;
+  `;
+
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size:8px;color:#00d2c8;letter-spacing:1.5px;text-transform:uppercase;font-family:Inter,sans-serif;font-weight:600;';
+  label.textContent = 'Rename Fielder';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = CUSTOM_NAMES[f.name] || f.name;
+  input.style.cssText = `
+    background:#0a1422;
+    border:1px solid #1e3148;
+    color:#e8edf5;
+    border-radius:5px;
+    padding:5px 8px;
+    font-size:11px;
+    font-family:Inter,sans-serif;
+    width:100%;
+    outline:none;
+  `;
+  input.addEventListener('focus', () => input.style.borderColor = '#00d2c8');
+  input.addEventListener('blur', () => input.style.borderColor = '#1e3148');
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:5px;';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = `
+    flex:1;background:linear-gradient(135deg,#00d2c8,#009f98);
+    border:none;color:#080d12;border-radius:5px;
+    padding:4px 8px;font-size:9px;font-weight:700;
+    font-family:Rajdhani,sans-serif;letter-spacing:1px;cursor:pointer;
+  `;
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = `
+    flex:1;background:transparent;border:1px solid #1e3148;
+    color:#6b8aaa;border-radius:5px;
+    padding:4px 8px;font-size:9px;font-weight:600;
+    font-family:Inter,sans-serif;cursor:pointer;
+  `;
+  cancelBtn.addEventListener('mouseover', () => cancelBtn.style.borderColor='#2a4a6e');
+  cancelBtn.addEventListener('mouseout', () => cancelBtn.style.borderColor='#1e3148');
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = '↺';
+  resetBtn.title = 'Reset to original';
+  resetBtn.style.cssText = `
+    background:transparent;border:1px solid #1e3148;
+    color:#6b8aaa;border-radius:5px;
+    padding:4px 7px;font-size:11px;cursor:pointer;
+  `;
+
+  function applyRename() {
+    const newName = input.value.trim();
+    if(newName && newName !== f.name) {
+      CUSTOM_NAMES[f.name] = newName;
+    } else if(!newName) {
+      return; // don't allow empty
+    }
+    // Update the SVG text label immediately
+    textEl.textContent = newName || shortLbl(f.name);
+    // Update flist chip if exists
+    updateFListChip(f.name, newName);
+    popup.remove();
+  }
+
+  function resetName() {
+    delete CUSTOM_NAMES[f.name];
+    textEl.textContent = shortLbl(f.name);
+    updateFListChip(f.name, f.name);
+    popup.remove();
+  }
+
+  saveBtn.addEventListener('click', applyRename);
+  cancelBtn.addEventListener('click', () => popup.remove());
+  resetBtn.addEventListener('click', resetName);
+  input.addEventListener('keydown', e => {
+    if(e.key === 'Enter') applyRename();
+    if(e.key === 'Escape') popup.remove();
+  });
+
+  row.appendChild(saveBtn);
+  row.appendChild(cancelBtn);
+  row.appendChild(resetBtn);
+  popup.appendChild(label);
+  popup.appendChild(input);
+  popup.appendChild(row);
+  document.body.appendChild(popup);
+  input.select();
+
+  // Close if clicking outside
+  setTimeout(() => {
+    document.addEventListener('click', function outsideClick(ev) {
+      if(!popup.contains(ev.target)) {
+        popup.remove();
+        document.removeEventListener('click', outsideClick);
+      }
+    });
+  }, 100);
+}
+
+function updateFListChip(originalName, newName) {
+  const fl = document.getElementById('flist');
+  if(!fl) return;
+  fl.querySelectorAll('.fchip').forEach(chip => {
+    if(chip.textContent.trim() === originalName || chip.textContent.trim() === (CUSTOM_NAMES[originalName] || originalName)) {
+      // preserve dot, update text
+      const dot = chip.querySelector('.fdot');
+      chip.innerHTML = '';
+      if(dot) chip.appendChild(dot);
+      chip.appendChild(document.createTextNode(newName));
+    }
+  });
+}
+
+function getDisplayName(name) {
+  return CUSTOM_NAMES[name] || name;
+}
+
 const SHORT={
   'Slip':'Slip','Second Slip':'2nd Sl','Third Slip':'3rd Sl',
   'Gully':'Gully','Point':'Point','Backward Point':'B.Pt',
@@ -1457,7 +1632,10 @@ const SHORT={
   'Mid-wicket':'M.Wkt','Deep Mid-wicket':'D.M.Wkt',
   'Square Leg':'Sq.Leg','Backward Square Leg':'BSL','Fine Leg':'Fine Lg'
 };
-function shortLbl(n){ return SHORT[n]||n.slice(0,8); }
+function shortLbl(n){ 
+  if(CUSTOM_NAMES[n]) return CUSTOM_NAMES[n];
+  return SHORT[n]||n.slice(0,8); 
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  RENDER RESULTS PANEL
@@ -1506,7 +1684,8 @@ function renderResults(data){
   data.fielders.forEach(f=>{
     const ch=document.createElement('div'); ch.className='fchip';
     const dotCls = f.locked ? 'locked' : f.deep ? 'deep' : '';
-    ch.innerHTML=`<div class="fdot ${dotCls}"></div>${f.name}`;
+    const displayName = CUSTOM_NAMES[f.name] || f.name;
+    ch.innerHTML=`<div class="fdot ${dotCls}"></div>${displayName}`;
     fl.appendChild(ch);
   });
 
